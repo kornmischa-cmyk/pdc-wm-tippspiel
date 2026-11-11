@@ -1,0 +1,62 @@
+name: Supabase-Abgleich
+
+# Läuft, sobald data/wm.json auf main geändert wird (durch die geplante
+# Claude-Aufgabe oder von Hand). Manuell startbar unter Actions → Run workflow.
+on:
+  push:
+    branches: [main]
+    paths: ['data/wm.json']
+  workflow_dispatch:
+
+concurrency:
+  group: supabase-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Datei prüfen
+        id: check
+        run: |
+          jq -e '(.matches | type == "array")' data/wm.json > /dev/null
+          n=$(jq '(.matches | length) + (.rounds // [] | length)' data/wm.json)
+          echo "count=$n" >> "$GITHUB_OUTPUT"
+          if [ "$n" -eq 0 ]; then echo "Noch keine Spiele in data/wm.json, nichts zu übertragen." | tee -a "$GITHUB_STEP_SUMMARY"; fi
+
+      - name: An Supabase senden
+        if: steps.check.outputs.count != '0'
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${SUPABASE_URL}" ] || [ -z "${SUPABASE_KEY}" ] || [ -z "${BOT_TOKEN}" ]; then
+            echo "::error::Secrets SUPABASE_URL, SUPABASE_ANON_KEY und BOT_TOKEN fehlen (Settings → Secrets and variables → Actions)."
+            exit 1
+          fi
+          body=$(jq -n --arg t "$BOT_TOKEN" --slurpfile d data/wm.json '{p_token: $t, p_data: $d[0]}')
+          res=$(curl -sS --fail-with-body -X POST "${SUPABASE_URL%/}/rest/v1/rpc/bot_sync" \
+            -H "apikey: ${SUPABASE_KEY}" \
+            -H "Content-Type: application/json" \
+            -d "$body")
+          echo "$res" | jq .
+          {
+            echo "## Ergebnis des Abgleichs"
+            echo
+            echo "$res" | jq -r '"- Neu angelegt: \(.created // 0)\n- Aktualisiert: \(.updated // 0)\n- Ergebnisse eingetragen: \(.results // 0)\n- Konflikte: \(.conflicts // [] | length)\n- Fehler: \(.errors // [] | length)"'
+            echo
+            echo '```json'
+            echo "$res" | jq .
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "$res" | jq -e '.ok == true' > /dev/null || { echo "::error::Abgleich abgelehnt: $(echo "$res" | jq -r '.error')"; exit 1; }
+          n=$(echo "$res" | jq '(.conflicts | length) + (.errors | length)')
+          if [ "$n" -gt 0 ]; then
+            echo "::error::$n Konflikt(e)/Fehler. Nichts wurde überschrieben. Details in der Zusammenfassung."
+            exit 1
+          fi
