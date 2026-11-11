@@ -7,7 +7,7 @@
 --     anon key. Deshalb sind alle Tabellen per RLS dicht.
 --   * Lesbar sind direkt nur `rounds` und `matches`.
 --   * Alles andere läuft über Funktionen (RPC), die Name + PIN prüfen.
---   * Fremde Tipps gibt es erst ab Anpfiff (starts_at <= now()).
+--   * Fremde Tipps gibt es erst ab Spielbeginn (starts_at <= now()).
 --   * Nach 8 falschen PINs ist ein Profil 15 Minuten gesperrt.
 -- =====================================================================
 
@@ -451,7 +451,7 @@ end $$;
 -- ---------------------------------------------------------------------
 -- Die GitHub Action schickt den kompletten Stand aus data/wm.json.
 -- Regeln:
---   * Spiele und Anstoßzeiten werden angelegt bzw. aktualisiert.
+--   * Spiele und Beginnzeiten werden angelegt bzw. aktualisiert.
 --   * Ein Ergebnis wird nur eingetragen, wenn noch keins existiert.
 --   * Ein abweichendes Ergebnis wird NIE still überschrieben, sondern als
 --     Konflikt gemeldet. Ausnahme: "force": true im Eintrag.
@@ -566,7 +566,7 @@ begin
         if v_p1 is not null and v_p1 is distinct from m.player1 then v_changes := v_changes || ('Spieler 1: ' || coalesce(m.player1, '–') || ' → ' || v_p1); end if;
         if v_p2 is not null and v_p2 is distinct from m.player2 then v_changes := v_changes || ('Spieler 2: ' || coalesce(m.player2, '–') || ' → ' || v_p2); end if;
         if v_ts is not null and v_ts is distinct from m.starts_at then
-          v_changes := v_changes || ('Anstoß: ' || coalesce(to_char(m.starts_at at time zone 'Europe/Berlin', 'DD.MM. HH24:MI'), '–')
+          v_changes := v_changes || ('Beginn: ' || coalesce(to_char(m.starts_at at time zone 'Europe/Berlin', 'DD.MM. HH24:MI'), '–')
                                      || ' → ' || to_char(v_ts at time zone 'Europe/Berlin', 'DD.MM. HH24:MI'));
         end if;
         if cardinality(v_changes) > 0 then

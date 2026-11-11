@@ -6,7 +6,7 @@ Tippspiel für die Mannschaft. Jedes Teammitglied legt ein Profil mit Name und 4
 - Richtiger Sieger: 1 Punkt
 - Zusätzlich exaktes Satzergebnis: +2 Punkte
 - Ab Viertelfinale zählt alles doppelt (pro Runde in der Tabelle `rounds` einstellbar)
-- Tippschluss ist der Anpfiff. Erst danach sieht man die Tipps der anderen.
+- Tippschluss ist der Spielbeginn. Erst danach sieht man die Tipps der anderen.
 - Bei Punktgleichheit entscheidet die Zahl der exakten Tipps.
 
 **Technik:** Statische Seite (HTML/CSS/JS, kein Build) auf GitHub Pages, Daten in Supabase. Alle Schreibzugriffe laufen über Datenbankfunktionen, die die PIN prüfen. Die Tabellen selbst sind per Row Level Security gesperrt.
@@ -86,7 +86,7 @@ Unter **Admin → Spieltag** den Tag wählen, die Sätze eintragen und auf **Spe
 - Der Sieger wird in die nächste Runde geschrieben.
 - Ein korrigiertes Ergebnis zieht die Paarung in der nächsten Runde mit, solange dort noch kein Ergebnis steht.
 
-Paarungen und Anstoßzeiten lassen sich im selben Formular von Hand ändern.
+Paarungen und Beginnzeiten lassen sich im selben Formular von Hand ändern.
 
 ### Rundenformat prüfen
 Die Tabelle `rounds` enthält die Best-of-Werte der WM 2025/26 (Runde 1 und 2: Best of 5, Runde 3 und Achtelfinale: Best of 7, Viertelfinale: 9, Halbfinale: 11, Finale: 13). **Diese Werte vor dem Turnier mit dem offiziellen Format abgleichen** und bei Bedarf im Supabase **Table Editor** ändern. Dort lässt sich auch der Punkte-Faktor pro Runde ändern.
