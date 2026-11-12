@@ -1,6 +1,6 @@
 {
   "hinweis": "Wird von der geplanten Claude-Aufgabe gepflegt (siehe automation/aufgabe.md). Jede Änderung auf main wird per GitHub Action nach Supabase übertragen.",
-  "aktualisiert": null,
+  "aktualisiert": "2026-11-12T11:20:31+01:00",
   "quellen": [],
   "rounds": [
     {
