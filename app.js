@@ -88,7 +88,10 @@
     savePhase: {},         // id -> 'saving' | 'saved'
     resultOpen: {},        // vom Nutzer auf- oder zugeklappte Ergebnisse
     adminDay: null,
-    authMode: 'login'
+    authMode: 'login',
+    hit: null,             // Button, der beim nächsten Rendern der Karte „einschlägt“
+    enter: false,          // true nur beim Betreten eines Screens (Auftritts-Animationen)
+    renderedOnce: false
   };
 
   function readSession() {
@@ -334,14 +337,32 @@
     el.outerHTML = matchCard(m);
     const fresh = view.querySelector(`[data-card="${id}"]`);
     if (key && fresh) fresh.querySelector(key)?.focus({ preventScroll: true });
+    if (fresh && state.hit?.id === id) {
+      const btn = fresh.querySelector(state.hit.sel);
+      if (btn?.getAttribute('aria-pressed') === 'true') {
+        btn.classList.add('hit');
+        btn.addEventListener('animationend', () => btn.classList.remove('hit'), { once: true });
+      }
+      state.hit = null;
+    }
 
     const info = nextDayInfo();
     const bar = view.querySelector('.statusbar');
-    if (bar && info) bar.outerHTML = statusbar(info);
+    if (bar && info) { bar.outerHTML = statusbar(info); syncSticky(); }
     for (const h of view.querySelectorAll('h2.day[data-day]')) {
       h.querySelector('.day-status')?.remove();
       h.insertAdjacentHTML('beforeend', dayStatus(h.dataset.day));
     }
+  }
+
+  // Nur den Speicherstatus umschalten, ohne die Karte neu zu zeichnen
+  // (sonst bricht der „Einschlag“ ab und der Fokus springt).
+  function setPhase(id) {
+    const card = view.querySelector(`[data-card="${id}"]`);
+    if (!card) return;
+    const phase = state.savePhase[id];
+    card.querySelector('.saving')?.toggleAttribute('hidden', phase !== 'saving');
+    card.querySelector('.saved')?.toggleAttribute('hidden', phase !== 'saved');
   }
 
   const savedTimers = {};
@@ -358,15 +379,15 @@
       await rpc('save_tip', { ...auth(), p_match: id, p_pick: pick, p_loser_sets: loserSets });
       if (pick == null) {
         delete state.savePhase[id];
-        rerenderCard(id);
+        setPhase(id);
         const label = tipLabel(m, before);
-        announce(`Tipp ${label} entfernt`);
+        // Der Toast ist selbst eine Live-Region; keine zweite Ansage.
         toast(`Tipp ${label} entfernt`, false, { label: 'Rückgängig', fn: () => saveTip(id, before.pick, before.loser_sets ?? null) });
       } else {
         state.savePhase[id] = 'saved';
-        rerenderCard(id);
+        setPhase(id);
         announce(`${tipLabel(m, state.myTips[id])} gespeichert`);
-        savedTimers[id] = setTimeout(() => { delete state.savePhase[id]; rerenderCard(id); }, 1200);
+        savedTimers[id] = setTimeout(() => { delete state.savePhase[id]; setPhase(id); }, 1200);
       }
     } catch (e) {
       delete state.savePhase[id];
@@ -398,7 +419,7 @@
   // Ergebnisse
   // ------------------------------------------------------------------
 
-  function resultBlock(m, tips, isOpen) {
+  function resultBlock(m, tips, isOpen, reveal) {
     const mine = tips.find((t) => t.player_id === state.session?.id);
     const mult = m.round.multiplier || 1;
     const cls = (s) => (m.finished ? (m.winner === s ? ' win' : ' lose') : '');
@@ -438,7 +459,7 @@
       ? `${short1} ${m.sets1}:${m.sets2} ${short2}, dein Tipp ${mine ? ptsText(mine.points) : 'fehlt'}`
       : `${short1} gegen ${short2}, läuft, dein Tipp ${tipLabel(m, mine)}`;
 
-    return `<details class="result" data-result="${m.id}"${isOpen ? ' open' : ''}><summary aria-label="${esc(summaryLabel)}"><div class="meta">${m.start ? `<span class="time">${fmtTime.format(m.start)}</span>` : ''}<span>${esc(m.round.name)}</span><span>Best of ${m.round.best_of}</span>${m.finished ? '' : '<span class="badge live">läuft</span>'}${mult > 1 ? '<span class="badge x2">×2<span class="sr-only"> Punkte doppelt</span></span>' : ''}</div><div class="scoreline"><span class="p${cls(1)}">${esc(pName(m, 1))}</span>${sets}<span class="p r${cls(2)}">${esc(pName(m, 2))}</span></div><div class="mytip"><span class="tip"><span class="k">Dein Tipp</span><b>${esc(tipLabel(m, mine))}</b>${calc ? `<span class="calc">${calc}</span>` : ''}</span>${big}${ICON.chev}</div></summary><ul class="tiplist">${list || '<li><span class="t">Noch keine Profile.</span></li>'}</ul></details>`;
+    return `<details class="result${reveal ? ' reveal' : ''}" data-result="${m.id}"${isOpen ? ' open' : ''}><summary aria-label="${esc(summaryLabel)}"><div class="meta">${m.start ? `<span class="time">${fmtTime.format(m.start)}</span>` : ''}<span>${esc(m.round.name)}</span><span>Best of ${m.round.best_of}</span>${m.finished ? '' : '<span class="badge live">läuft</span>'}${mult > 1 ? '<span class="badge x2">×2<span class="sr-only"> Punkte doppelt</span></span>' : ''}</div><div class="scoreline"><span class="p${cls(1)}">${esc(pName(m, 1))}</span>${sets}<span class="p r${cls(2)}">${esc(pName(m, 2))}</span></div><div class="mytip"><span class="tip"><span class="k">Dein Tipp</span><b>${esc(tipLabel(m, mine))}</b>${calc ? `<span class="calc">${calc}</span>` : ''}</span>${big}${ICON.chev}</div></summary><ul class="tiplist">${list || '<li><span class="t">Noch keine Profile.</span></li>'}</ul></details>`;
   }
 
   function renderErgebnisse() {
@@ -458,7 +479,7 @@
     let html = title;
     for (const [, ms] of groupByDay(list)) {
       html += `<h2 class="day"><span>${ms[0].start ? esc(fmtDay.format(ms[0].start)) : 'Ohne Termin'}</span></h2><div class="stack">`;
-      html += ms.map((m) => resultBlock(m, byMatch.get(m.id) || [], state.resultOpen[m.id] ?? m.id === newest)).join('');
+      html += ms.map((m) => resultBlock(m, byMatch.get(m.id) || [], state.resultOpen[m.id] ?? m.id === newest, state.enter && m.id === newest && state.resultOpen[m.id] !== false)).join('');
       html += '</div>';
     }
     view.innerHTML = html;
@@ -490,7 +511,7 @@
     const podIds = new Set(groups.flatMap((g) => g.people.map((p) => p.player_id)));
 
     if (groups.length) {
-      html += `<section class="podium n${groups.length}" aria-label="Podium">${groups.map((g, i) => `<div class="pod p${i + 1}"><div class="pod-people">${g.people.map((p) => `<div class="pod-person${p.player_id === meId ? ' me' : ''}"><span class="pod-name">${esc(p.name)}${p.player_id === meId ? du : ''}</span><span class="pod-pts">${p.points}<small>Pkt</small></span><span class="pod-stats">${p.exacts} exakt</span></div>`).join('')}</div><div class="pod-step"><span>${g.rank}</span>${g.people.length > 1 ? '<span class="pod-shared">geteilt</span>' : ''}</div></div>`).join('')}</section>`;
+      html += `<section class="podium n${groups.length}${state.enter ? ' enter' : ''}" aria-label="Podium">${groups.map((g, i) => `<div class="pod p${i + 1}"><div class="pod-people">${g.people.map((p) => `<div class="pod-person${p.player_id === meId ? ' me' : ''}"><span class="pod-name">${esc(p.name)}${p.player_id === meId ? du : ''}</span><span class="pod-pts">${p.points}<small>Pkt</small></span><span class="pod-stats">${p.exacts} exakt</span></div>`).join('')}</div><div class="pod-step"><span>${g.rank}</span>${g.people.length > 1 ? '<span class="pod-shared">geteilt</span>' : ''}</div></div>`).join('')}</section>`;
     } else if (rows.length) {
       const wait = finishedCount ? 'Noch hat niemand gepunktet.' : 'Das Podium wird nach dem ersten Ergebnis besetzt.';
       html += `<section class="podium is-empty" aria-label="Podium">${[1, 2, 3].map((n) => `<div class="pod p${n}"><div class="pod-people"></div><div class="pod-step"><span>${n}</span></div></div>`).join('')}<p class="pod-wait">${wait}</p></section>`;
@@ -638,6 +659,17 @@
   // Rahmen, Routing, Laden
   // ------------------------------------------------------------------
 
+  // Klebende Ebenen: Höhen messen statt fester Pixelwerte, damit größere
+  // Systemschrift Kopfzeile und Statusleiste nicht übereinanderschiebt.
+  const topbar = document.querySelector('.topbar');
+  function syncSticky() {
+    document.body.style.setProperty('--tb-h', `${topbar.offsetHeight}px`);
+    const sb = view.querySelector('.statusbar');
+    if (sb) view.style.setProperty('--sb-h', `${sb.offsetHeight}px`);
+  }
+  if ('ResizeObserver' in window) new ResizeObserver(syncSticky).observe(topbar);
+  window.addEventListener('resize', syncSticky);
+
   const VIEWS = { tippen: renderTippen, ergebnisse: renderErgebnisse, rangliste: renderRangliste, admin: renderAdmin };
 
   function renderFrame() {
@@ -660,7 +692,8 @@
     return VIEWS[v] ? v : 'tippen';
   }
 
-  function route() {
+  function route(enter = false) {
+    state.enter = enter;
     if (!configured) return renderSetup();
     renderFrame();
     if (!state.loaded) return state.loadError ? renderOffline(state.loadError) : renderLoading();
@@ -670,6 +703,7 @@
     for (const a of tabs.querySelectorAll('a')) a.setAttribute('aria-current', a.dataset.tab === v ? 'page' : 'false');
     view.className = 'view';
     VIEWS[v]();
+    syncSticky();
   }
 
   function setBusy(on) {
@@ -696,7 +730,8 @@
         loading = null;
       }
       const y = window.scrollY;
-      route();
+      route(!state.renderedOnce);
+      state.renderedOnce = true;
       window.scrollTo(0, y);
       return true;
     })();
@@ -761,7 +796,7 @@
     if (a === 'filter') {
       state.filter = b.dataset.f;
       state.filterIds = state.filter === 'offen' ? untippedIds() : null;
-      renderTippen();
+      renderTippen(); syncSticky();
       view.querySelector(`.chip[data-f="${state.filter}"]`)?.focus();
       return;
     }
@@ -786,6 +821,7 @@
       const t = state.myTips[id];
       const pick = Number(b.dataset.pick);
       if (t?.pick === pick) return saveTip(id, null, null);
+      state.hit = { id, sel: `[data-action="pick"][data-pick="${pick}"]` };
       // Entschieden: Beim Wechsel des Siegers wird das exakte Ergebnis zurückgesetzt.
       return saveTip(id, pick, null);
     }
@@ -795,6 +831,7 @@
       if (card?.classList.contains('locked')) return;
       if (!t) { nudge(id); return; }
       const l = Number(b.dataset.l);
+      if (t.loser_sets !== l) state.hit = { id, sel: `[data-action="exact"][data-l="${l}"]` };
       return saveTip(id, t.pick, t.loser_sets === l ? null : l);
     }
 
@@ -829,16 +866,21 @@
     }
   });
 
-  // Auf- und Zuklappen der Ergebnisse merken (toggle bubbelt nicht).
-  view.addEventListener('toggle', (ev) => {
-    const d = ev.target;
-    if (d.matches?.('details[data-result]')) state.resultOpen[d.dataset.result] = d.open;
-  }, true);
+  // Auf- und Zuklappen der Ergebnisse merken; beim Öffnen fährt die Tippliste herein.
+  view.addEventListener('click', (ev) => {
+    const sum = ev.target.closest('details[data-result] > summary');
+    if (!sum) return;
+    const d = sum.parentElement;
+    const opening = !d.open;
+    state.resultOpen[d.dataset.result] = opening;
+    d.classList.toggle('reveal', opening);
+  });
 
   who.addEventListener('click', (ev) => {
     const b = ev.target.closest('[data-action]');
     if (!b) return;
     if (b.dataset.action === 'logout') {
+      if (!confirm('Abmelden? Zum Wiederkommen brauchst du deine PIN.')) return;
       writeSession(null); state.myTips = {}; state.resultOpen = {};
       who.innerHTML = ''; location.hash = ''; route();
     }
@@ -862,6 +904,7 @@
         const r = await rpc(mode === 'login' ? 'login' : 'register_player', { p_name: name, p_pin: fd.pin });
         writeSession({ id: r.player_id, name: r.name, pin: fd.pin, is_admin: r.is_admin });
         lastName.set(r.name);
+        state.renderedOnce = false;
         location.hash = '#tippen';
         await reload(true);
         window.scrollTo(0, 0);
@@ -912,7 +955,7 @@
 
   window.addEventListener('hashchange', () => {
     if (location.hash === '#me') return;
-    route();
+    route(true);
     window.scrollTo(0, 0);
   });
   document.addEventListener('visibilitychange', () => {
@@ -927,7 +970,7 @@
     if (isEditing() || isSaving()) return;
     if (wasOpen !== openMatches().length) reload(true);
     else if (currentView() === 'tippen' && !view.contains(document.activeElement)) {
-      const y = window.scrollY; renderTippen(); window.scrollTo(0, y);
+      const y = window.scrollY; renderTippen(); syncSticky(); window.scrollTo(0, y);
     }
   }, 60000);
   setInterval(() => { if (state.loaded && !document.hidden && !isEditing() && !isSaving()) reload(true); }, 180000);
