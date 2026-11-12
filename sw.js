@@ -2,8 +2,9 @@
    Netz zuerst: Die App ist immer aktuell. Nur ohne Netz kommt das
    Grundgerüst aus dem Cache, damit statt einer Browser-Fehlerseite die
    App mit „Keine Verbindung“ erscheint. Daten (Supabase) werden nie gecacht. */
-const CACHE = 'tippspiel-v1';
-const SHELL = ['./', './index.html', './style.css', './app.js', './config.js', './manifest.webmanifest', './icons/icon-192.png'];
+const CACHE = 'tippspiel-v2';
+const SHELL = ['./', './index.html', './style.css', './app.js', './config.js', './manifest.webmanifest', './icons/icon-192.png',
+  './vendor/supabase-js-2.119.0.js', './fonts/fonts.css', './fonts/barlow-latin-400-normal.woff2'];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));

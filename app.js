@@ -7,8 +7,10 @@
   const TZ = 'Europe/Berlin';
   const SESSION_KEY = 'wm-tippspiel-session';
   const LASTNAME_KEY = 'wm-tippspiel-last-name';
+  const CODE_KEY = 'wm-tippspiel-team-code';
   const view = document.getElementById('view');
   const tabs = document.getElementById('tabs');
+  const foot = document.getElementById('foot');
   const who = document.getElementById('who');
   const toastEl = document.getElementById('toast');
   const liveEl = document.getElementById('live');
@@ -56,7 +58,8 @@
     next_match_played: 'Das Folgespiel hat schon ein Ergebnis. Lösche zuerst das Ergebnis dort.',
     round_unknown: 'Diese Runde gibt es nicht.',
     import_format: 'Der Import muss eine JSON-Liste sein.',
-    self_delete: 'Du kannst dein eigenes Profil nicht löschen.'
+    self_delete: 'Du kannst dein eigenes Profil nicht löschen.',
+    team_code: 'Dieser Code stimmt nicht.'
   };
   const isNetwork = (e) => !e?.code && /fetch|network|load failed|netzwerk/i.test(e?.message || '');
   const errText = (e) => {
@@ -74,6 +77,8 @@
 
   const state = {
     session: readSession(),
+    teamCode: readCode(),
+    codeError: null,       // 'changed', wenn ein gespeicherter Code nicht mehr gilt
     rounds: {},
     matches: [],
     myTips: {},
@@ -101,6 +106,21 @@
     state.session = s;
     try { s ? localStorage.setItem(SESSION_KEY, JSON.stringify(s)) : localStorage.removeItem(SESSION_KEY); } catch { /* privat */ }
   }
+  function readCode() {
+    try { return localStorage.getItem(CODE_KEY) || ''; } catch { return ''; }
+  }
+  function writeCode(c) {
+    state.teamCode = c || '';
+    try { c ? localStorage.setItem(CODE_KEY, c) : localStorage.removeItem(CODE_KEY); } catch { /* privat */ }
+  }
+  // Gespeicherter Code gilt nicht mehr (z. B. vom Admin geändert): zurück zur Code-Eingabe.
+  function forgetCode() {
+    writeCode('');
+    state.codeError = 'changed';
+    state.loaded = false;
+    state.loadError = null;
+    state.players = []; state.board = []; state.publicTips = [];
+  }
   const lastName = {
     get() { try { return localStorage.getItem(LASTNAME_KEY) || ''; } catch { return ''; } },
     set(v) { try { localStorage.setItem(LASTNAME_KEY, v); } catch { /* privat */ } }
@@ -115,7 +135,11 @@
 
   async function rpc(fn, args = {}) {
     const { data, error } = await db.rpc(fn, args);
-    if (error) throw new Error(error.message);
+    if (error) {
+      const e = new Error(error.message);
+      if (error.message === 'team_code') e.code = 'team_code';
+      throw e;
+    }
     if (data && data.ok === false) {
       const e = new Error(data.error); e.code = data.error; e.data = data;
       if (['wrong', 'unknown'].includes(e.code) && fn !== 'login' && fn !== 'register_player' && state.session) {
@@ -128,6 +152,7 @@
     return data;
   }
   const auth = () => ({ p_player: state.session.id, p_pin: state.session.pin });
+  const team = () => ({ p_code: state.teamCode });
 
   function enrich(m) {
     const r = state.rounds[m.round_id] || { name: `Runde ${m.round_id}`, best_of: 5, multiplier: 1 };
@@ -146,9 +171,9 @@
     const [r, m, board, pub, players] = await Promise.all([
       db.from('rounds').select('*'),
       db.from('matches').select('*'),
-      rpc('leaderboard'),
-      rpc('get_public_tips'),
-      rpc('list_players')
+      rpc('leaderboard', team()),
+      rpc('get_public_tips', team()),
+      rpc('list_players', team())
     ]);
     if (r.error) throw new Error(r.error.message);
     if (m.error) throw new Error(m.error.message);
@@ -570,11 +595,57 @@
   }
 
   // ------------------------------------------------------------------
+  // Mannschaftscode
+  // ------------------------------------------------------------------
+
+  function renderCode() {
+    tabs.hidden = true; who.innerHTML = '';
+    document.body.classList.add('auth-shell');
+    view.className = 'view auth';
+    view.removeAttribute('aria-busy');
+    const admin = esc(CFG.admin || 'dem Admin');
+    const changed = state.codeError === 'changed';
+    view.innerHTML = `<div class="auth-hero">${STAGE_BOARD}<h1>Nur für die Mannschaft</h1><p class="sub">Gib den Mannschaftscode ein. Du bekommst ihn von ${admin}.</p></div><form class="form" id="codeForm" novalidate><label class="f">Mannschaftscode<input name="code" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" enterkeyhint="go"${changed ? ' aria-invalid="true" aria-describedby="codeErr"' : ''}></label><p class="form-err" id="codeErr" role="alert"${changed ? '' : ' hidden'}>${ICON.warn}<span>${changed ? `Der Code stimmt nicht oder hat sich geändert. Frag ${admin} nach dem aktuellen.` : ''}</span></p><button type="submit" class="btn-primary">Weiter</button></form><p class="auth-note">Der Code wird nur auf diesem Gerät gespeichert. Groß- und Kleinschreibung und Leerzeichen spielen keine Rolle.</p>`;
+  }
+
+  // Link mit Code (…/#code=xyz): Code übernehmen und aus der Adresse entfernen.
+  function takeCodeFromHash() {
+    const m = location.hash.match(/^#code=(.+)$/);
+    if (!m) return false;
+    let c = '';
+    try { c = decodeURIComponent(m[1]).trim(); } catch { /* kaputter Link */ }
+    history.replaceState(null, '', location.pathname + location.search);
+    if (c) { writeCode(c); state.codeError = null; }
+    return true;
+  }
+
+  // ------------------------------------------------------------------
+  // Über das Tippspiel
+  // ------------------------------------------------------------------
+
+  function renderInfo() {
+    const admin = esc(CFG.admin || 'Der Admin');
+    document.body.classList.remove('auth-shell');
+    tabs.hidden = !state.session;
+    if (!state.session) who.innerHTML = '';
+    for (const a of tabs.querySelectorAll('a')) a.setAttribute('aria-current', 'false');
+    view.className = 'view info';
+    view.removeAttribute('aria-busy');
+    view.innerHTML = `<div class="rank-head"><h1>Über das Tippspiel</h1><p class="sub">Privat, ohne Geld, ohne Werbung</p></div>`
+      + `<section class="info-sec first"><h2>Wer steckt dahinter</h2><p>Ein privates Tippspiel unserer Dartmannschaft zur PDC Darts-WM 2026/27. Es gibt keinen Einsatz und keine Preise, nur die Ehre. Betrieben wird es von ${admin}. Fragen, Auskunft über deine Daten oder Löschen deines Profils: sprich ${admin} an.</p></section>`
+      + `<section class="info-sec"><h2>Was gespeichert wird</h2><ul><li>Dein Name, so wie du ihn eingibst. Vorname oder Spitzname reicht.</li><li>Deine PIN, aber nur verschlüsselt. Niemand kann sie lesen, auch der Admin nicht.</li><li>Deine Tipps und wann du sie zuletzt geändert hast.</li><li>Auf deinem Gerät: Anmeldung und Mannschaftscode im Browser-Speicher, damit du angemeldet bleibst.</li></ul><p>Keine Cookies, kein Tracking, keine Statistik über dein Verhalten.</p></section>`
+      + `<section class="info-sec"><h2>Wer was sieht</h2><p>Namen, Rangliste und Tipps sieht nur, wer den Mannschaftscode kennt. Die Tipps der anderen werden erst ab Spielbeginn sichtbar. Paarungen und Ergebnisse der WM sind öffentlich.</p></section>`
+      + `<section class="info-sec"><h2>Wo die Daten liegen</h2><ul><li>Die Datenbank liegt bei Supabase im Rechenzentrum Frankfurt.</li><li>Die App selbst liegt bei GitHub Pages (GitHub Inc., USA). Beim Aufruf verarbeitet GitHub technisch deine IP-Adresse.</li><li>Schriften und Programmteile kommen von derselben Adresse. Es werden keine weiteren Dienste geladen.</li></ul></section>`
+      + `<section class="info-sec"><h2>Löschen</h2><p>Dein Profil samt Tipps kann ${admin} jederzeit löschen. Nach der WM, spätestens Ende Januar 2027, wird die ganze Datenbank gelöscht.</p></section>`
+      + `<div class="info-back"><a class="btn" href="#tippen">Zurück zum Tippspiel</a></div>`;
+  }
+
+  // ------------------------------------------------------------------
   // Systemzustände
   // ------------------------------------------------------------------
 
   function renderSetup() {
-    tabs.hidden = true; who.innerHTML = '';
+    tabs.hidden = true; who.innerHTML = ''; foot.hidden = true;
     view.className = 'view';
     view.innerHTML = `<div class="empty sys">${ICON.terminal}<h2>Fast fertig</h2><p>Die App ist noch nicht mit der Datenbank verbunden.</p><ol class="steps"><li>In <code>config.js</code> die URL und den anon key des Supabase-Projekts eintragen.</li><li>Die Seite neu laden.</li></ol><p class="tech">Die einzelnen Schritte stehen in der README.</p></div>`;
   }
@@ -689,13 +760,17 @@
 
   function currentView() {
     const v = location.hash.replace('#', '');
-    return VIEWS[v] ? v : 'tippen';
+    return VIEWS[v] || v === 'info' ? v : 'tippen';
   }
 
   function route(enter = false) {
     state.enter = enter;
     if (!configured) return renderSetup();
     renderFrame();
+    const info = location.hash === '#info';
+    foot.hidden = info;
+    if (info) return renderInfo();
+    if (!state.teamCode) return renderCode();
     if (!state.loaded) return state.loadError ? renderOffline(state.loadError) : renderLoading();
     view.removeAttribute('aria-busy');
     if (!state.session) return renderAuth();
@@ -717,11 +792,13 @@
   let loading = null;
   async function reload(silent) {
     if (loading) return loading;
+    if (!state.teamCode) { route(); return false; }
     setBusy(true);
     loading = (async () => {
       try {
         await loadAll();
       } catch (e) {
+        if (e.code === 'team_code') { forgetCode(); route(); return false; }
         if (!state.loaded) { state.loadError = e; route(); return false; }
         if (!silent) toast('Keine Verbindung. Die Daten sind vom letzten Laden.', true, { label: 'Erneut versuchen', fn: () => reload() });
         return false;
@@ -893,6 +970,34 @@
     const fd = Object.fromEntries(new FormData(f));
     const btn = f.querySelector('[type="submit"]');
 
+    if (f.id === 'codeForm') {
+      const code = (fd.code || '').trim();
+      const input = f.querySelector('[name="code"]');
+      const fail = (msg) => {
+        const p = f.querySelector('#codeErr');
+        p.querySelector('span').textContent = msg;
+        p.hidden = false;
+        input.setAttribute('aria-invalid', 'true');
+        input.setAttribute('aria-describedby', 'codeErr');
+        input.focus();
+      };
+      if (!code) return fail('Bitte gib den Code ein.');
+      setButtonBusy(btn, 'Prüft …');
+      try {
+        await rpc('list_players', { p_code: code });
+        writeCode(code);
+        state.codeError = null;
+        state.loaded = false; state.loadError = null; state.renderedOnce = false;
+        renderLoading();
+        await reload(true);
+        window.scrollTo(0, 0);
+      } catch (e) {
+        resetButton(btn);
+        fail(e.code === 'team_code' ? ERRORS.team_code : errText(e));
+      }
+      return;
+    }
+
     if (f.id === 'authForm') {
       const mode = state.players.length ? state.authMode : 'register';
       const name = (fd.name || '').trim();
@@ -901,7 +1006,7 @@
       if (mode === 'register' && fd.pin !== fd.pin2) return authError(f, 'Die beiden PINs stimmen nicht überein.', 'pin2');
       setButtonBusy(btn, mode === 'login' ? 'Anmelden …' : 'Profil anlegen …');
       try {
-        const r = await rpc(mode === 'login' ? 'login' : 'register_player', { p_name: name, p_pin: fd.pin });
+        const r = await rpc(mode === 'login' ? 'login' : 'register_player', { p_name: name, p_pin: fd.pin, ...team() });
         writeSession({ id: r.player_id, name: r.name, pin: fd.pin, is_admin: r.is_admin });
         lastName.set(r.name);
         state.renderedOnce = false;
@@ -909,6 +1014,7 @@
         await reload(true);
         window.scrollTo(0, 0);
       } catch (e) {
+        if (e.code === 'team_code') { forgetCode(); route(); return; }
         resetButton(btn);
         const field = e.code === 'name_taken' || e.code === 'name_invalid' || e.code === 'unknown' ? 'name' : 'pin';
         authError(f, errText(e), field);
@@ -955,6 +1061,7 @@
 
   window.addEventListener('hashchange', () => {
     if (location.hash === '#me') return;
+    if (takeCodeFromHash()) { state.loaded = false; state.loadError = null; route(); if (configured) reload(true); return; }
     route(true);
     window.scrollTo(0, 0);
   });
@@ -975,6 +1082,7 @@
   }, 60000);
   setInterval(() => { if (state.loaded && !document.hidden && !isEditing() && !isSaving()) reload(true); }, 180000);
 
+  takeCodeFromHash();
   route();
   if (configured) reload(true);
 })();

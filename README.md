@@ -18,7 +18,12 @@ Tippspiel für die Mannschaft. Jedes Teammitglied legt ein Profil mit Name und 4
 ### 1. Supabase-Projekt anlegen
 1. Auf [supabase.com](https://supabase.com) ein neues Projekt anlegen. Als Region empfiehlt sich Frankfurt (`eu-central-1`).
 2. Den **SQL Editor** öffnen, den kompletten Inhalt von `supabase/schema.sql` einfügen und auf **Run** klicken.
-3. Unter **Project Settings → API** (bzw. **API Keys**) zwei Werte kopieren:
+3. Den Mannschaftscode festlegen (mindestens 8 Zeichen; Groß-/Kleinschreibung und Leerzeichen zählen nicht):
+   ```sql
+   select public.set_team_code('dein-code');
+   ```
+   Ohne Code ist die App komplett zu. Ein neuer Code macht den alten ungültig, dann müssen ihn alle neu eingeben.
+4. Unter **Project Settings → API** (bzw. **API Keys**) zwei Werte kopieren:
    - Die **Project URL**
    - Den **anon** bzw. **publishable** key
 
@@ -53,7 +58,9 @@ In `config.js` URL und Key eintragen, dazu optional Titel und Admin-Name.
 4. Die geplante Claude-Aufgabe pflegt ab dann `data/wm.json`. Jede Änderung wird automatisch übertragen und im Admin-Bereich unter **Automatik** protokolliert.
 
 ### 6. Link ans Team schicken
-Fertig. Jeder legt sein Profil selbst an.
+Am einfachsten mit dem Code im Link, dann muss ihn niemand abtippen:
+`https://kornmischa-cmyk.github.io/pdc-wm-tippspiel/#code=dein-code`
+(Leerzeichen im Code als `%20`). Der Code steht nach dem `#` und wird deshalb nicht an GitHub übertragen; die App speichert ihn auf dem Gerät und entfernt ihn aus der Adresse. Jeder legt sein Profil selbst an.
 
 ---
 
@@ -96,6 +103,12 @@ Unter **Admin → Profile** auf **PIN neu** tippen. Nach 8 falschen Versuchen is
 
 ---
 
+## Datenschutz
+- Namen, Rangliste und Tipps gibt es nur mit dem Mannschaftscode. Ohne Code sieht man nur die Code-Eingabe und die Seite **Über das Tippspiel** (`#info`), die erklärt, was gespeichert wird.
+- Schriften (`fonts/`, SIL Open Font License) und supabase-js (`vendor/`) liegen im Repo. Beim Öffnen werden keine Drittanbieter wie Google Fonts oder ein CDN geladen.
+- Die Seite ist für Suchmaschinen gesperrt (`noindex`).
+- Nach der WM, spätestens Ende Januar 2027, das Supabase-Projekt löschen. So steht es auf der Info-Seite.
+
 ## Bekannte Grenzen
 - **Die PIN ist ein Teamschutz, keine Bank-Sicherheit.** Sie bremst „mal eben für jemand anderen tippen“, mehr nicht. Sie ist gehasht gespeichert. Im Browser des Nutzers liegt sie im `localStorage`, damit man nicht jedes Mal neu eingeben muss.
 - **Freie Supabase-Projekte pausieren nach etwa einer Woche ohne Nutzung.** Während der WM ist das kein Problem. Vorher kannst du es im Dashboard reaktivieren.
@@ -106,6 +119,7 @@ Unter **Admin → Profile** auf **PIN neu** tippen. Nach 8 falschen Versuchen is
 |---|---|
 | `index.html`, `style.css`, `app.js` | Die App |
 | `config.js` | Supabase-Zugang und Titel |
+| `fonts/`, `vendor/` | Schriften und supabase-js, lokal statt von Google/CDN |
 | `supabase/schema.sql` | Tabellen, Sicherheitsregeln, Funktionen. Kann erneut ausgeführt werden, ohne Daten zu löschen. |
 | `data/wm.json` | Spielplan und Ergebnisse, gepflegt von der Automatik |
 | `.github/workflows/sync.yml` | Überträgt `data/wm.json` nach Supabase |

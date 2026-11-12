@@ -5,7 +5,11 @@
 -- Sicherheitsmodell:
 --   * Es gibt keinen Supabase-Login. Die App nutzt nur den öffentlichen
 --     anon key. Deshalb sind alle Tabellen per RLS dicht.
---   * Lesbar sind direkt nur `rounds` und `matches`.
+--   * Lesbar sind direkt nur `rounds` und `matches` (Paarungen und
+--     Ergebnisse der Profis, keine Daten von uns).
+--   * Namen, Rangliste und Tipps gibt es nur mit dem Mannschaftscode.
+--     Ohne festgelegten Code ist alles zu. Festlegen im SQL Editor:
+--       select public.set_team_code('dein-code');
 --   * Alles andere läuft über Funktionen (RPC), die Name + PIN prüfen.
 --   * Fremde Tipps gibt es erst ab Spielbeginn (starts_at <= now()).
 --   * Nach 8 falschen PINs ist ein Profil 15 Minuten gesperrt.
@@ -68,6 +72,13 @@ create table if not exists public.tips (
   primary key (player_id, match_id)
 );
 
+-- Mannschaftscode (nur als Hash). Genau eine Zeile.
+create table if not exists public.team_config (
+  id         int primary key default 1 check (id = 1),
+  code_hash  text not null,
+  updated_at timestamptz not null default now()
+);
+
 -- ---------------------------------------------------------------------
 -- Zugriffsschutz
 -- ---------------------------------------------------------------------
@@ -76,8 +87,9 @@ alter table public.rounds  enable row level security;
 alter table public.matches enable row level security;
 alter table public.players enable row level security;
 alter table public.tips    enable row level security;
+alter table public.team_config enable row level security;
 
-revoke all on public.rounds, public.matches, public.players, public.tips from anon, authenticated;
+revoke all on public.rounds, public.matches, public.players, public.tips, public.team_config from anon, authenticated;
 grant select on public.rounds, public.matches to anon, authenticated;
 
 drop policy if exists rounds_read  on public.rounds;
@@ -110,6 +122,45 @@ begin
     failed_attempts = case when failed_attempts + 1 >= 8 then 0 else failed_attempts + 1 end
   where id = p_player;
   return 'wrong';
+end $$;
+
+-- Mannschaftscode: Groß-/Kleinschreibung und Leerzeichen zählen nicht.
+create or replace function public._norm_code(p text)
+returns text language sql immutable as $$
+  select lower(regexp_replace(coalesce(p, ''), '\s', '', 'g'))
+$$;
+
+-- true, wenn der Code stimmt. Ohne festgelegten Code immer false.
+create or replace function public._team_ok(p_code text)
+returns boolean language sql stable security definer
+set search_path = public, extensions as $$
+  select coalesce((select code_hash = crypt(public._norm_code(p_code), code_hash)
+                   from public.team_config where id = 1), false)
+$$;
+
+-- Bricht mit dem Fehler 'team_code' ab, wenn der Code fehlt oder nicht stimmt.
+create or replace function public._require_team(p_code text)
+returns void language plpgsql stable security definer
+set search_path = public, extensions as $$
+begin
+  if not public._team_ok(p_code) then
+    raise exception 'team_code' using hint = 'Mannschaftscode fehlt oder stimmt nicht.';
+  end if;
+end $$;
+
+-- Nur im SQL Editor: select public.set_team_code('dein-code');
+-- Ein neuer Code macht den alten ungültig; alle müssen ihn dann neu eingeben.
+create or replace function public.set_team_code(p_code text)
+returns text language plpgsql security definer
+set search_path = public, extensions as $$
+declare c text := public._norm_code(p_code);
+begin
+  if length(c) < 8 then
+    raise exception 'Der Mannschaftscode braucht mindestens 8 Zeichen (Leerzeichen zählen nicht).';
+  end if;
+  insert into public.team_config (id, code_hash) values (1, crypt(c, gen_salt('bf', 8)))
+  on conflict (id) do update set code_hash = excluded.code_hash, updated_at = now();
+  return 'Mannschaftscode gespeichert.';
 end $$;
 
 create or replace function public._auth_admin(p_player bigint, p_pin text)
@@ -165,17 +216,29 @@ $$;
 -- Öffentliche Funktionen (Spieler)
 -- ---------------------------------------------------------------------
 
-create or replace function public.list_players()
-returns table (id bigint, name text) language sql stable security definer
-set search_path = public as $$
-  select id, name from public.players order by lower(name)
-$$;
+-- Frühere Fassungen ohne Mannschaftscode entfernen, sonst blieben sie offen.
+drop function if exists public.list_players();
+drop function if exists public.register_player(text, text);
+drop function if exists public.login(text, text);
+drop function if exists public.get_public_tips();
+drop function if exists public.leaderboard();
 
-create or replace function public.register_player(p_name text, p_pin text)
+create or replace function public.list_players(p_code text)
+returns table (id bigint, name text) language plpgsql stable security definer
+set search_path = public, extensions as $$
+begin
+  perform public._require_team(p_code);
+  return query select p.id, p.name from public.players p order by lower(p.name);
+end $$;
+
+create or replace function public.register_player(p_name text, p_pin text, p_code text)
 returns jsonb language plpgsql security definer
 set search_path = public, extensions as $$
 declare v_name text := btrim(coalesce(p_name, '')); v_id bigint;
 begin
+  if not public._team_ok(p_code) then
+    return jsonb_build_object('ok', false, 'error', 'team_code');
+  end if;
   if length(v_name) < 2 or length(v_name) > 24 then
     return jsonb_build_object('ok', false, 'error', 'name_invalid');
   end if;
@@ -191,11 +254,14 @@ begin
   return jsonb_build_object('ok', true, 'player_id', v_id, 'name', v_name, 'is_admin', false);
 end $$;
 
-create or replace function public.login(p_name text, p_pin text)
+create or replace function public.login(p_name text, p_pin text, p_code text)
 returns jsonb language plpgsql security definer
 set search_path = public, extensions as $$
 declare r public.players; s text;
 begin
+  if not public._team_ok(p_code) then
+    return jsonb_build_object('ok', false, 'error', 'team_code');
+  end if;
   select * into r from public.players where lower(name) = lower(btrim(coalesce(p_name, '')));
   if not found then return jsonb_build_object('ok', false, 'error', 'unknown'); end if;
   s := public._auth(r.id, p_pin);
@@ -256,26 +322,32 @@ begin
     from public._scored_tips() where player_id = p_player), '[]'::jsonb));
 end $$;
 
--- Alle Tipps für Spiele, die begonnen haben. Ohne PIN abrufbar.
-create or replace function public.get_public_tips()
+-- Alle Tipps für Spiele, die begonnen haben. Ohne PIN, aber nur mit Mannschaftscode.
+create or replace function public.get_public_tips(p_code text)
 returns table (
   match_id bigint, player_id bigint, name text, pick smallint, loser_sets smallint,
   finished boolean, hit boolean, exact boolean, points int
-) language sql stable security definer
-set search_path = public as $$
+) language plpgsql stable security definer
+set search_path = public, extensions as $$
+begin
+  perform public._require_team(p_code);
+  return query
   select st.match_id, st.player_id, p.name, st.pick, st.loser_sets,
          st.finished, st.hit, st.exact, st.points
   from public._scored_tips() st
   join public.matches m on m.id = st.match_id
   join public.players p on p.id = st.player_id
   where m.starts_at <= now() or m.sets1 is not null
-  order by st.match_id, lower(p.name)
-$$;
+  order by st.match_id, lower(p.name);
+end $$;
 
-create or replace function public.leaderboard()
+create or replace function public.leaderboard(p_code text)
 returns table (player_id bigint, name text, points int, hits int, exacts int, tipped int)
-language sql stable security definer
-set search_path = public as $$
+language plpgsql stable security definer
+set search_path = public, extensions as $$
+begin
+  perform public._require_team(p_code);
+  return query
   select p.id, p.name,
          coalesce(sum(st.points), 0)::int,
          (count(*) filter (where st.hit))::int,
@@ -284,8 +356,8 @@ set search_path = public as $$
   from public.players p
   left join public._scored_tips() st on st.player_id = p.id
   group by p.id, p.name
-  order by 3 desc, 5 desc, lower(p.name)
-$$;
+  order by 3 desc, 5 desc, lower(p.name);
+end $$;
 
 -- ---------------------------------------------------------------------
 -- Admin-Funktionen
@@ -643,13 +715,13 @@ end $$;
 revoke execute on all functions in schema public from public, anon, authenticated;
 
 grant execute on function
-  public.list_players(),
-  public.register_player(text, text),
-  public.login(text, text),
+  public.list_players(text),
+  public.register_player(text, text, text),
+  public.login(text, text, text),
   public.save_tip(bigint, text, bigint, int, int),
   public.get_my_tips(bigint, text),
-  public.get_public_tips(),
-  public.leaderboard(),
+  public.get_public_tips(text),
+  public.leaderboard(text),
   public.admin_save_match(bigint, text, int, int, text, text, text),
   public.admin_import(bigint, text, jsonb),
   public.admin_set_result(bigint, text, bigint, int, int),
@@ -659,7 +731,7 @@ grant execute on function
   public.admin_bot_log(bigint, text, int),
   public.bot_sync(text, jsonb)
 to anon, authenticated;
--- create_bot_token() bleibt bewusst nur im SQL Editor ausführbar.
+-- create_bot_token() und set_team_code() bleiben bewusst nur im SQL Editor ausführbar.
 
 -- Nach der ersten Registrierung dich selbst zum Admin machen:
 --   update public.players set is_admin = true where lower(name) = lower('DEIN NAME');
