@@ -8,22 +8,5 @@
       "best_of": 5
     }
   ],
-  "matches": [
-    {
-      "round": 1,
-      "pos": 101,
-      "player1": "Test Spieler Eins",
-      "player2": "Test Spieler Zwei",
-      "starts_at": "2026-11-12 14:05",
-      "sets1": 3,
-      "sets2": 1
-    },
-    {
-      "round": 1,
-      "pos": 102,
-      "player1": "Test Spieler Drei",
-      "player2": "Test Spieler Vier",
-      "starts_at": "2026-11-13 20:00"
-    }
-  ]
+  "matches": []
 }
