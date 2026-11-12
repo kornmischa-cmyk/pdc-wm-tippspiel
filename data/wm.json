@@ -2,6 +2,11 @@
   "hinweis": "Wird von der geplanten Claude-Aufgabe gepflegt (siehe automation/aufgabe.md). Jede Änderung auf main wird per GitHub Action nach Supabase übertragen.",
   "aktualisiert": null,
   "quellen": [],
-  "rounds": [],
+  "rounds": [
+    {
+      "id": 1,
+      "best_of": 5
+    }
+  ],
   "matches": []
 }
