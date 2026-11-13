@@ -626,8 +626,10 @@
   function renderInfo() {
     const admin = esc(CFG.admin || 'Der Admin');
     document.body.classList.remove('auth-shell');
-    tabs.hidden = !state.session;
-    if (!state.session) who.innerHTML = '';
+    // Navigation und Anmeldezeile nur, wenn man wirklich drin ist (angemeldet und mit Code).
+    const inside = !!(state.session && state.teamCode);
+    tabs.hidden = !inside;
+    if (!inside) who.innerHTML = '';
     for (const a of tabs.querySelectorAll('a')) a.setAttribute('aria-current', 'false');
     view.className = 'view info';
     view.removeAttribute('aria-busy');
