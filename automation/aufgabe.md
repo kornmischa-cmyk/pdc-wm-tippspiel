@@ -7,7 +7,11 @@ Diese Datei steuert die geplante Claude-Aufgabe. Sie liegt im Repo, damit Anpass
 
 ## Grundregeln (nicht verhandelbar)
 1. **Nur Fakten aus Quellen.** Nichts schätzen, nichts aus dem Gedächtnis. Jede Paarung, jede Beginnzeit und jedes Ergebnis stammt aus einer aktuellen Websuche in diesem Lauf.
-2. **Ergebnisse nur bei zwei übereinstimmenden Quellen.** Geeignet sind z. B. pdc.tv, sport1.de, dartsnews.com, flashscore, dartsdatabase, kicker, Sky Sports oder BBC. Findest du nur eine Quelle, trägst du nichts ein und versuchst es im nächsten Lauf erneut.
+2. **Ergebnisse aus der offiziellen Quelle oder aus zwei übereinstimmenden Quellen.**
+   - **Die PDC allein reicht** (pdc.tv: Ergebnisseiten, Match-Berichte, offizieller Live-Ticker), wenn das Spiel dort eindeutig als beendet steht und das Ergebnis gültig ist (siehe „Format“: eine Seite hat genau die nötige Satzzahl, die andere weniger).
+   - **Alle anderen Quellen zählen nur zu zweit und übereinstimmend**, z. B. sport1.de, dartsnews.com, flashscore, dartsdatabase, kicker, Sky Sports oder BBC.
+   - Findest du weder das eine noch das andere, trägst du nichts ein. Der nächste Lauf versucht es erneut.
+   - Ziel ist, dass ein Ergebnis möglichst bald nach Matchende in der App steht. Such deshalb zuerst auf pdc.tv.
 3. **Bestehende Ergebnisse nie ändern.** Steht in der Datei schon ein Ergebnis und eine Quelle sagt etwas anderes, änderst du nichts und meldest den Widerspruch. `force` setzt du nie selbst.
 4. **Namen nicht umschreiben.** Steht ein Spieler schon in der Datei, übernimmst du exakt dessen Schreibweise.
 5. **Sätze aus Sicht von player1/player2.** `sets1` gehört zu `player1`, `sets2` zu `player2`. Vor dem Eintragen immer prüfen, dass die Reihenfolge nicht vertauscht ist.
@@ -28,11 +32,12 @@ Diese Datei steuert die geplante Claude-Aufgabe. Sie liegt im Repo, damit Anpass
    - **Phase C: das Finale hat ein Ergebnis.** Melde „WM abgeschlossen“ und empfiehl, die geplanten Aufgaben zu deaktivieren. Danach nichts mehr ändern.
 3. Gibt es Änderungen: Setze `aktualisiert` auf den aktuellen Zeitstempel und ergänze genutzte Quellen-URLs in `quellen` (die letzten 20 genügen). Prüfe die Datei mit `jq empty data/wm.json` und committe auf `main`, z. B. „Ergebnisse 1. Runde: 6 Spiele“ oder „Spielplan 2. Runde“. Danach pushen.
 4. Warte auf den Lauf der GitHub Action (`gh run list` / `gh run watch`) und lies das Ergebnis.
-5. **Bericht an Mischa** als kurze Nachricht auf Deutsch:
-   - Was eingetragen wurde, mit Anzahl und Beispielen.
-   - Was fehlt und warum, z. B. „nur eine Quelle“.
-   - Konflikte, Fehler der Action oder Unklarheiten. **Diese immer zuerst nennen.**
-   - Gab es nichts zu tun, reicht ein Satz.
+5. **Bericht an Mischa** als kurze Nachricht auf Deutsch (SendUserMessage). Während der WM läuft die Aufgabe stündlich; damit Mischas Handy nicht ständig klingelt, geht nur in diesen Fällen eine Nachricht raus:
+   - **Immer:** Konflikte, Fehler (Klonen, Push, GitHub Action) oder Unklarheiten. Diese stehen zuerst.
+   - **Phase A:** wenn du Spielplan oder Format eingetragen hast.
+   - **Lauf um 10:25 Uhr (Tageszusammenfassung):** was seit dem Vortag eingetragen wurde (Anzahl, Beispiele; `git log --since="yesterday 10:00" -- data/wm.json` hilft), und welche begonnenen Spiele seit mehr als 6 Stunden noch ohne Ergebnis sind und warum (z. B. „nur eine Quelle“). War nichts los (z. B. Spielpause), reicht ein Satz.
+   - **Phase C:** „WM abgeschlossen“.
+   - **Sonst keine Nachricht**, auch wenn du Ergebnisse eingetragen hast. Beende den Lauf dann mit einem Satz, was du getan hast.
 
 ## Format von data/wm.json
 ```json
